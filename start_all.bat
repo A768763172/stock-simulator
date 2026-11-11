@@ -1,52 +1,44 @@
 @echo off
-chcp 65001 >nul 2>&1
-title Intraday Stack Launcher (scheduler + dashboard)
+chcp 936 >nul 2>&1
+title Ä£Äâ½»Ò× Ò»¼üÈë¿Ú
 setlocal
 set "ROOT=C:\Users\Administrator\WorkBuddy\2026-09-21-17-21-45\stock-simulator"
 set "PY=C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python.exe"
 set "VENV_PY=C:\Users\Administrator\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
 set "DASH_PORT=8501"
+set "DASH_URL=http://localhost:%DASH_PORT%"
 
-cd /d "%ROOT%" || (echo [ERR] cannot cd to %ROOT% & pause & exit /b 1)
-if not exist "%PY%" (echo [ERR] python not found: %PY% & pause & exit /b 1)
-if not exist "%VENV_PY%" (echo [ERR] venv python not found: %VENV_PY% & pause & exit /b 1)
-if not exist "%ROOT%\scheduler.py" (echo [ERR] scheduler.py not found & pause & exit /b 1)
-if not exist "%ROOT%\dashboard.py" (echo [ERR] dashboard.py not found & pause & exit /b 1)
+cd /d "%ROOT%" || (echo [´íÎó] ÎÞ·¨½øÈë %ROOT% & pause & exit /b 1)
+if not exist "%PY%" (echo [´íÎó] Î´ÕÒµ½ python & pause & exit /b 1)
+if not exist "%VENV_PY%" (echo [´íÎó] Î´ÕÒµ½ venv python & pause & exit /b 1)
 
-echo ============================================================
-echo  Starting FULL intraday stack: scheduler + dashboard
-echo  Project       : %ROOT%
-echo  Scheduler log : %ROOT%\data\scheduler.log
-echo  Dashboard URL : http://localhost:%DASH_PORT%
-echo  - Dashboard launches in its OWN window (title: Intraday Dashboard)
-echo  - Close THIS window to stop the scheduler.
-echo  - Close the Dashboard window to stop the dashboard.
-echo  NOTE: if port %DASH_PORT% is busy, stop the old dashboard first.
-echo ============================================================
-
-REM launch dashboard (streamlit) in a separate window
-REM å•å®žä¾‹ä¿æŠ¤ï¼šè‹¥ 8501 å·²è¢«å ç”¨ï¼Œè¯´æ˜Ž dashboard å·²åœ¨è¿è¡Œï¼Œè·³è¿‡é‡å¤å¯åŠ¨ï¼Œ
-REM é¿å…åŒç«¯å£èµ·ä¸¤ä¸ª streamlit äº’ç›¸å¹²æ‰°ï¼ˆæ›¾å‡ºçŽ°ä¸¤ä¸ª streamlit åŒç»‘ 8501ï¼‰
-powershell -NoProfile -Command "$p=Get-NetTCPConnection -LocalPort %DASH_PORT% -ErrorAction SilentlyContinue; if($p){Write-Host '[WARN] ç«¯å£ %DASH_PORT% å·²è¢«å ç”¨ï¼Œdashboard å¯èƒ½å·²åœ¨è¿è¡Œï¼Œè·³è¿‡é‡å¤å¯åŠ¨ã€‚'; exit 2}"
-set DASH_SKIP=0
-if errorlevel 2 set DASH_SKIP=1
-if "%DASH_SKIP%"=="0" (
-    start "Intraday Dashboard" "%VENV_PY%" -m streamlit run dashboard.py --server.port %DASH_PORT% --server.headless true
-) else (
-    echo [INFO] æœªé‡å¤å¯åŠ¨ dashboardï¼ˆç«¯å£ %DASH_PORT% å·²è¢«å ç”¨ï¼‰ã€‚
-)
-
-REM run scheduler in this window (foreground)
-REM å•å®žä¾‹ä¿æŠ¤ï¼šè‹¥ 8502 å·²è¢«å ç”¨ï¼Œè¯´æ˜Žè°ƒåº¦å™¨å·²åœ¨è¿è¡Œï¼ˆå¦‚ç™»å½•ä»»åŠ¡å·²æ‹‰èµ·ï¼‰ï¼Œ
-REM è·³è¿‡å‰å°å¯åŠ¨ï¼Œé¿å…é‡å¤è¿›ç¨‹ä¸Žæœ«å°¾ pause é˜»å¡žã€‚
+REM 1) µ÷¶ÈÆ÷µ¥ÊµÀý ¶Ë¿Ú 8502
 set SCHED_SKIP=0
-powershell -NoProfile -Command "$p=Get-NetTCPConnection -LocalPort 8502 -ErrorAction SilentlyContinue; if($p){Write-Host '[WARN] ç«¯å£ 8502 å·²è¢«å ç”¨ï¼Œè°ƒåº¦å™¨å¯èƒ½å·²åœ¨è¿è¡Œï¼Œè·³è¿‡å¯åŠ¨ã€‚'; exit 2}"
+powershell -NoProfile -Command "if(Get-NetTCPConnection -LocalPort 8502 -ErrorAction SilentlyContinue){exit 2}" >nul 2>&1
 if errorlevel 2 set SCHED_SKIP=1
 if "%SCHED_SKIP%"=="0" (
-    "%PY%" scheduler.py
-    echo.
-    echo [scheduler exited] see data\scheduler.log for details.
-    pause
+    echo [Æô¶¯] µ÷¶ÈÆ÷ ºóÌ¨
+    start "" "%PY%" "%ROOT%\scheduler.py"
 ) else (
-    echo [INFO] è°ƒåº¦å™¨å·²åœ¨è¿è¡Œï¼ˆç™»å½•ä»»åŠ¡æˆ–æ­¤å‰å·²å¯åŠ¨ï¼‰ï¼Œæœ¬çª—å£æ— å…³ç´§è¦ï¼Œå¯ç›´æŽ¥å…³é—­ã€‚
+    echo [Ìø¹ý] µ÷¶ÈÆ÷ÒÑÔÚÔËÐÐ
 )
+
+REM 2) ¿´°åµ¥ÊµÀý ¶Ë¿Ú 8501
+set DASH_SKIP=0
+powershell -NoProfile -Command "if(Get-NetTCPConnection -LocalPort %DASH_PORT% -ErrorAction SilentlyContinue){exit 2}" >nul 2>&1
+if errorlevel 2 set DASH_SKIP=1
+if "%DASH_SKIP%"=="0" (
+    echo [Æô¶¯] ¿´°å ºóÌ¨
+    start "Intraday Dashboard" "%VENV_PY%" -m streamlit run "%ROOT%\dashboard.py" --server.port %DASH_PORT% --server.headless true
+) else (
+    echo [Ìø¹ý] ¿´°åÒÑÔÚÔËÐÐ
+)
+
+REM 3) ÎÞÂÛÈçºÎ¶¼´ò¿ª¿´°åä¯ÀÀÆ÷£¬ÈÃÓÃ»§¿´µ½½çÃæ
+echo [Íê³É] ÕýÔÚ´ò¿ª¿´°å %DASH_URL%
+ping -n 4 127.0.0.1 >nul
+start "" "%DASH_URL%"
+
+echo ÏµÍ³ÒÑ¾ÍÐ÷£¬¿É¹Ø±Õ´Ë´°¿Ú¡£
+ping -n 3 127.0.0.1 >nul
+exit /b 0
