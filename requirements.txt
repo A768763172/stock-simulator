@@ -1,0 +1,11 @@
+# stock-simulator 运行依赖
+#
+# 核心引擎仅使用 Python 标准库，无需额外 pip 依赖。
+# 行情对接 westock-data 以外部 CLI（westock）形式提供，安装方式见 README。
+# 如需运行单元测试，使用标准库 unittest（无需安装）。
+
+# 可选：仅在需要 pandas 做扩展分析时安装
+# pandas>=2.0
+
+# 实时交易监控看板（dashboard.py）
+streamlit>=1.30

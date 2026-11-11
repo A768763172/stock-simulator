@@ -1,0 +1,331 @@
+{
+  "availability": {
+    "total": 16,
+    "ok": 16,
+    "availability_pct": 100.0,
+    "timeout_cnt": 0,
+    "error_cnt": 0,
+    "latency_min_s": 2.287,
+    "latency_p50_s": 2.708,
+    "latency_p95_s": 3.371,
+    "latency_max_s": 3.517,
+    "latency_mean_s": 2.807,
+    "raw": [
+      {
+        "ok": true,
+        "dt": 2.5571541786193848,
+        "rc": 0,
+        "out_len": 1312,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.805248498916626,
+        "rc": 0,
+        "out_len": 1303,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.702479124069214,
+        "rc": 0,
+        "out_len": 1321,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.8726282119750977,
+        "rc": 0,
+        "out_len": 1328,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 3.246445417404175,
+        "rc": 0,
+        "out_len": 1311,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.9245383739471436,
+        "rc": 0,
+        "out_len": 1345,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.491485595703125,
+        "rc": 0,
+        "out_len": 1333,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.28745174407959,
+        "rc": 0,
+        "out_len": 1330,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 3.3709499835968018,
+        "rc": 0,
+        "out_len": 1320,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.3842527866363525,
+        "rc": 0,
+        "out_len": 1296,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.4752049446105957,
+        "rc": 0,
+        "out_len": 1323,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 3.204926013946533,
+        "rc": 0,
+        "out_len": 1328,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.7082746028900146,
+        "rc": 0,
+        "out_len": 1311,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.6882948875427246,
+        "rc": 0,
+        "out_len": 1345,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 3.5170273780822754,
+        "rc": 0,
+        "out_len": 1333,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.6708643436431885,
+        "rc": 0,
+        "out_len": 1328,
+        "err": ""
+      }
+    ]
+  },
+  "coverage": {
+    "kline_day_20": {
+      "ok": true,
+      "dt_s": 2.573,
+      "sample": 20
+    },
+    "fundamentals": {
+      "ok": true,
+      "dt_s": 8.386,
+      "sample": "Fundamentals(code='sh601000', name='唐山港'"
+    },
+    "trade_calendar": {
+      "ok": true,
+      "dt_s": 2.655,
+      "sample": "True"
+    },
+    "index_constituents_300": {
+      "ok": true,
+      "dt_s": 2.657,
+      "sample": 300
+    }
+  },
+  "concurrency": {
+    "workers": 10,
+    "wall_s": 16.272,
+    "ok": 10,
+    "success_pct": 100.0,
+    "effective_qps": 0.615,
+    "raw": [
+      {
+        "ok": true,
+        "dt": 12.069061279296875,
+        "rc": 0,
+        "out_len": 1311,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 14.308927297592163,
+        "rc": 0,
+        "out_len": 1296,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 7.914363145828247,
+        "rc": 0,
+        "out_len": 1321,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 13.675869941711426,
+        "rc": 0,
+        "out_len": 1336,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 12.98175835609436,
+        "rc": 0,
+        "out_len": 1311,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 13.8991219997406,
+        "rc": 0,
+        "out_len": 1347,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 14.276283025741577,
+        "rc": 0,
+        "out_len": 1333,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 14.81883430480957,
+        "rc": 0,
+        "out_len": 1329,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 13.812357664108276,
+        "rc": 0,
+        "out_len": 1321,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 13.195013761520386,
+        "rc": 0,
+        "out_len": 1321,
+        "err": ""
+      }
+    ]
+  },
+  "rate_limit": {
+    "calls": 6,
+    "ok": 6,
+    "success_pct": 100.0,
+    "any_timeout": false,
+    "max_single_dt_s": 2.976,
+    "raw": [
+      {
+        "ok": true,
+        "dt": 2.7815306186676025,
+        "rc": 0,
+        "out_len": 1312,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.3376007080078125,
+        "rc": 0,
+        "out_len": 1312,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.975667715072632,
+        "rc": 0,
+        "out_len": 1312,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.5227725505828857,
+        "rc": 0,
+        "out_len": 1312,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.3637335300445557,
+        "rc": 0,
+        "out_len": 1312,
+        "err": ""
+      },
+      {
+        "ok": true,
+        "dt": 2.5408334732055664,
+        "rc": 0,
+        "out_len": 1312,
+        "err": ""
+      }
+    ]
+  },
+  "e2e": {
+    "clean_validate_us": 0.678,
+    "get_quote_first_hit_s": 2.498,
+    "get_quote_cache_hit_s": 2e-05,
+    "consistency_same_price": true,
+    "consistency_prices": [
+      {
+        "price": 4.34,
+        "dt_s": 1e-05
+      },
+      {
+        "price": 4.34,
+        "dt_s": 1e-05
+      },
+      {
+        "price": 4.34,
+        "dt_s": 1e-05
+      },
+      {
+        "price": 4.34,
+        "dt_s": 1e-05
+      },
+      {
+        "price": 4.34,
+        "dt_s": 1e-05
+      }
+    ],
+    "collect_latency_from_avail_p50_s": 2.708
+  },
+  "freshness": {
+    "quote_time_field": "2026-09-23",
+    "fetched_at": "2026-09-23T14:25:49",
+    "time_field_present": true,
+    "note": "westock 返回的 time 字段为行情交易所时间戳；本探针抓取时刻为 fetched_at。"
+  },
+  "meta": {
+    "exe": "C:\\Users/Administrator\\.workbuddy\\binaries\\westock\\westock.exe",
+    "probe_at": "2026-09-23T14:25:49",
+    "cache_dir": "C:\\Users\\Administrator\\WorkBuddy\\2026-09-21-17-21-45\\stock-simulator\\data_source_verify\\.probe_cache",
+    "codes": [
+      "sh601000",
+      "sh601668",
+      "sh600511",
+      "sh600900",
+      "sh601816",
+      "sh600519",
+      "sh601318",
+      "sh000300"
+    ],
+    "note": "所有指标为现跑实测；系统无 3 个月历史监控，MTBF/MTTR/灾备等指标不在本次实测范围。"
+  }
+}
