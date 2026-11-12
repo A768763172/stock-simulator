@@ -662,8 +662,9 @@ def feed_html(feed: List[dict], limit: int = 120) -> str:
 
 # ============ 主界面 ============
 def pre_market_html(pre: dict) -> str:
-    """盘前速览卡片：只读 data/pre_market.json（由 pre_market.py 在交易日 09:00 生成）。
-    浅色主题、涨红跌绿；无数据返回空串，由调用方显示提示。"""
+    """盘前速览卡片：只读 data/pre_market.json（由 pre_market.py 在交易日 08:30 生成）。
+    浅色主题、涨红跌绿；含全市场涨跌宽度 / 行业强弱 / 领涨领跌 / 异动榜；
+    无数据返回空串，由调用方显示提示。所有字段缺失时自动隐藏对应区块。"""
     if not pre or not pre.get("generated_at"):
         return ""
     import html as _html
@@ -687,6 +688,14 @@ def pre_market_html(pre: dict) -> str:
         color = C_UP if f > 0 else (C_DOWN if f < 0 else "#4a5568")
         return f'<td style="color:{color};font-weight:600">{f:+.2f}%</td>'
 
+    def chg_span(v):
+        try:
+            f = float(v)
+        except Exception:
+            return '<span style="color:#718096">—</span>'
+        color = C_UP if f > 0 else (C_DOWN if f < 0 else "#4a5568")
+        return f'<span style="color:{color};font-weight:600">{f:+.2f}%</span>'
+
     rmap = {
         "BULL": ("偏多 BULL", "#c0392b", "#fff5f5", "#fc8181"),
         "BEAR": ("偏空 BEAR", "#1a7a3a", "#f0fff4", "#9ae6b4"),
@@ -694,6 +703,52 @@ def pre_market_html(pre: dict) -> str:
         "UNKNOWN": ("研判中（数据未就绪）", "#718096", "#f7fafc", "#e2e8f0"),
     }
     rlabel, rcolor, rbg, rborder = rmap.get(pre.get("regime"), rmap["UNKNOWN"])
+
+    # —— 全市场涨跌宽度（基于收盘流程预热的全市场快照，非当日盘前实时行情）——
+    breadth = pre.get("market_breadth") or {}
+    universe = pre.get("universe") or {}
+    sectors = pre.get("sectors") or {}
+    sample = breadth.get("sample") or 0
+    bh = ""
+    if sample:
+        up = breadth.get("up", 0)
+        down = breadth.get("down", 0)
+        flat = breadth.get("flat", 0)
+        wu, wd, wf = (up / sample * 100, down / sample * 100, flat / sample * 100)
+        bh = (
+            '<div style="margin:8px 0 6px">'
+            '<div style="font-size:12px;color:#4a5568;margin-bottom:4px">'
+            f'全市场涨跌分布 · {esc(universe.get("snapshot_date") or "快照日未知")}'
+            f'<span style="color:#a0aec0"> ｜ {esc(universe.get("scope") or "选股候选池")}'
+            f' ｜ {sample} 只有效 / 池 {universe.get("pool_total", 0)} 只</span></div>'
+            '<div style="display:flex;height:9px;border-radius:5px;overflow:hidden;'
+            'background:#edf2f7">'
+            f'<div style="width:{wu:.1f}%;background:{C_UP}"></div>'
+            f'<div style="width:{wf:.1f}%;background:#cbd5e0"></div>'
+            f'<div style="width:{wd:.1f}%;background:{C_DOWN}"></div></div>'
+            '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;'
+            'gap:6px;font-size:12px;margin-top:5px;color:#4a5568">'
+            f'<span><b style="color:{C_UP}">{up}</b> 涨 / <b style="color:{C_DOWN}">{down}</b> 跌</span>'
+            f'<span>平均 {chg_span(breadth.get("avg_change"))} · 中位 {chg_span(breadth.get("median_change"))}</span>'
+            f'<span>涨停 <b style="color:{C_UP}">{breadth.get("limit_up", 0)}</b> / '
+            f'跌停 <b style="color:{C_DOWN}">{breadth.get("limit_down", 0)}</b></span>'
+            f'<span>大涨(≥3%) {breadth.get("big_up", 0)} / 大跌(≤-3%) {breadth.get("big_down", 0)}</span>'
+            '</div></div>'
+        )
+    sl = sectors.get("leaders") or []
+    sd = sectors.get("laggards") or []
+    sh = ""
+    if sl or sd:
+        up_txt = "、".join(
+            f'{esc(s.get("industry"))} {chg_span(s.get("avg_change"))}' for s in sl) or "—"
+        dn_txt = "、".join(
+            f'{esc(s.get("industry"))} {chg_span(s.get("avg_change"))}' for s in sd) or "—"
+        sh = (
+            '<div style="font-size:12px;color:#4a5568;line-height:1.7;margin-bottom:6px">'
+            f'<b style="color:{C_UP}">领涨行业</b> {up_txt}'
+            f' <span style="color:#cbd5e0">｜</span> '
+            f'<b style="color:{C_DOWN}">领跌行业</b> {dn_txt}</div>'
+        )
 
     head = (
         f'<div style="background:{rbg};border:1px solid {rborder};border-radius:8px;'
@@ -704,6 +759,7 @@ def pre_market_html(pre: dict) -> str:
         f'<span style="color:#a0aec0;font-size:11px;font-weight:400">'
         f' ｜ 生成 {esc(pre.get("generated_at"))} ｜ {esc(pre.get("source"))}'
         f' ｜ 基准 {esc(pre.get("data_basis"))}</span></div>'
+        f'{bh}{sh}'
         f'<div style="font-size:13px;color:#2d3748;line-height:1.6">'
         f'{esc(pre.get("summary"))}</div>'
     )
@@ -719,7 +775,22 @@ def pre_market_html(pre: dict) -> str:
     for w in watch:
         wt += (f'<tr><td>{esc(w.get("name"))}</td><td>{esc(w.get("code"))}</td>'
                f'<td style="color:#718096">{esc(w.get("scope"))}</td>'
+               f'<td style="color:#718096">{esc(w.get("as_of") or "实时")}</td>'
                f'{chg_cell(w.get("change_pct"))}</tr>')
+
+    def mini_table(items, title):
+        body = ""
+        for r in items or []:
+            body += (f'<tr><td>{esc(r.get("name"))}</td>'
+                     f'<td style="color:#718096">{esc(r.get("industry") or "—")}</td>'
+                     f'{chg_cell(r.get("change_pct"))}</tr>')
+        return (
+            '<div style="flex:1;min-width:0">'
+            f'<div style="font-size:12px;font-weight:600;color:#4a5568;margin:6px 0">{title}</div>'
+            '<table class="grid"><tr><th>名称</th><th>行业</th><th>涨跌</th></tr>'
+            + (body or '<tr><td colspan="3" style="text-align:center;color:#a0aec0">无数据</td></tr>')
+            + '</table></div>'
+        )
 
     col1 = (
         '<div style="flex:1;min-width:0">'
@@ -734,13 +805,26 @@ def pre_market_html(pre: dict) -> str:
         '<div style="flex:1;min-width:0">'
         '<div style="font-size:12px;font-weight:600;color:#4a5568;margin:6px 0">'
         f'盘前异动观察（{len(watch)}）</div>'
-        '<table class="grid"><tr><th>名称</th><th>代码</th><th>来源</th><th>盘前</th></tr>' + (wt or
-        '<tr><td colspan="4" style="text-align:center;color:#a0aec0">无数据</td></tr>') +
+        '<table class="grid"><tr><th>名称</th><th>代码</th><th>来源</th><th>快照日</th>'
+        '<th>盘前</th></tr>' + (wt or
+        '<tr><td colspan="5" style="text-align:center;color:#a0aec0">无数据</td></tr>') +
         '</table></div>'
     )
+    leaders = breadth.get("leaders") or []
+    laggards = breadth.get("laggards") or []
+    uni_block = ""
+    if leaders or laggards:
+        uni_block = (
+            '<div style="font-size:12px;font-weight:600;color:#4a5568;margin:8px 0 2px">'
+            f'全市场领涨 / 领跌（{esc(universe.get("snapshot_date") or "快照日未知")}）</div>'
+            '<div style="display:flex;gap:18px">'
+            + mini_table(leaders, "领涨 Top5") + mini_table(laggards, "领跌 Top5")
+            + '</div>'
+        )
     detail = (
         '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;'
-        'color:#2b6cb0">展开：盘前持仓快照 / 异动观察明细</summary>'
+        'color:#2b6cb0">展开：全市场涨跌榜 / 盘前持仓快照 / 异动观察明细</summary>'
+        + uni_block +
         '<div style="display:flex;gap:18px;margin-top:6px">' + col1 + col2 +
         '</div></details>'
     )
@@ -878,15 +962,15 @@ def _render():
             '已禁止展示虚构价，请等待下一周期刷新或由源恢复。</div>',
             unsafe_allow_html=True)
 
-    # ========== 0) 盘前速览（交易日 09:00 由调度器生成，非交易日不检索）==========
+    # ========== 0) 盘前速览（交易日 08:30 由调度器生成，非交易日不检索）==========
     if mode == "实时看板":
         _pm = pre_market_html(load_json(DATA / "pre_market.json", {}))
         if _pm:
             st.markdown(_pm, unsafe_allow_html=True)
         else:
             st.markdown(
-                '<div class="summary">盘前速览：尚未生成。交易日 <b>09:00</b> 由调度器'
-                '自动执行盘前信息检索并展示；非交易日不检索、不报错。</div>',
+                '<div class="summary">盘前速览：尚未生成。交易日 <b>08:30</b> 由调度器'
+                '自动执行全市场盘前信息检索并展示；非交易日不检索、不报错。</div>',
                 unsafe_allow_html=True)
 
     # ========== 1) 账户概览 ==========
