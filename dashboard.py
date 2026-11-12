@@ -662,7 +662,7 @@ def feed_html(feed: List[dict], limit: int = 120) -> str:
 
 # ============ 主界面 ============
 def pre_market_html(pre: dict) -> str:
-    """盘前速览卡片：只读 data/pre_market.json（由 pre_market.py 在交易日 08:30 生成）。
+    """盘前速览卡片：只读 data/pre_market.json（由 pre_market.py 在交易日 08:45 生成）。
     浅色主题、涨红跌绿；含全市场涨跌宽度 / 行业强弱 / 领涨领跌 / 异动榜；
     无数据返回空串，由调用方显示提示。所有字段缺失时自动隐藏对应区块。"""
     if not pre or not pre.get("generated_at"):
@@ -828,7 +828,59 @@ def pre_market_html(pre: dict) -> str:
         '<div style="display:flex;gap:18px;margin-top:6px">' + col1 + col2 +
         '</div></details>'
     )
-    return head + detail + '</div>'
+    # —— 盘前资讯：政策监管 / 市场要闻 / 公司公告 / 财经热文 ——
+    news = pre.get("news") or {}
+    nh = ""
+    if news:
+        srcs = news.get("sources") or {}
+        status = "; ".join(
+            f'{esc(v.get("label"))} {"就绪" if v.get("ok") else "未就绪"}'
+            f'({v.get("count", 0)})' for v in srcs.values()) or "无数据源记录"
+
+        def news_items(items, limit=8):
+            body = ""
+            for it in (items or [])[:limit]:
+                title = esc(it.get("title"))
+                url = it.get("url") or ""
+                if url:
+                    title = (f'<a href="{esc(url)}" target="_blank" '
+                             f'style="color:#2b6cb0;text-decoration:none">{title}</a>')
+                meta = " · ".join(str(x) for x in
+                                  (it.get("time"), it.get("source")) if x)
+                body += (
+                    '<div style="padding:4px 0;border-bottom:1px solid #edf2f7;'
+                    'font-size:12px;line-height:1.5">'
+                    f'<div style="color:#2d3748">{title}</div>'
+                    f'<div style="color:#a0aec0;font-size:11px">{esc(meta)}</div></div>')
+            return body or '<div style="font-size:12px;color:#a0aec0">暂无内容</div>'
+
+        def news_col(title, items):
+            return (
+                '<div style="flex:1;min-width:210px">'
+                f'<div style="font-size:12px;font-weight:600;color:#4a5568;margin:4px 0">'
+                f'{title}（{len(items or [])}）</div>' + news_items(items or []) + '</div>')
+
+        cols = (news_col("政策与监管", news.get("policy"))
+                + news_col("市场要闻", news.get("market_news"))
+                + news_col("公司公告", news.get("notices"))
+                + news_col("财经热文", news.get("hot")))
+        note = ""
+        if not news.get("available"):
+            note = (f'<div style="font-size:12px;color:#9c4221;margin-top:4px">'
+                    f'{esc(news.get("note") or "盘前资讯源未就绪")}</div>')
+        nh = (
+            '<div style="border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px">'
+            '<div style="font-size:12px;font-weight:600;color:#4a5568">'
+            '盘前资讯 · 政策 / 公告 / 热文'
+            f'<span style="color:#a0aec0;font-weight:400"> ｜ 采集 '
+            f'{esc(news.get("generated_at") or "—")} ｜ {status}</span></div>'
+            + note +
+            '<details style="margin-top:4px"><summary style="cursor:pointer;'
+            'font-size:12px;color:#2b6cb0">展开：政策监管 / 市场要闻 / 公司公告 / 财经热文</summary>'
+            '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:6px">'
+            + cols + '</div></details></div>')
+
+    return head + nh + detail + '</div>'
 
 
 def _render():
@@ -962,14 +1014,14 @@ def _render():
             '已禁止展示虚构价，请等待下一周期刷新或由源恢复。</div>',
             unsafe_allow_html=True)
 
-    # ========== 0) 盘前速览（交易日 08:30 由调度器生成，非交易日不检索）==========
+    # ========== 0) 盘前速览（交易日 08:45 由调度器生成，非交易日不检索）==========
     if mode == "实时看板":
         _pm = pre_market_html(load_json(DATA / "pre_market.json", {}))
         if _pm:
             st.markdown(_pm, unsafe_allow_html=True)
         else:
             st.markdown(
-                '<div class="summary">盘前速览：尚未生成。交易日 <b>08:30</b> 由调度器'
+                '<div class="summary">盘前速览：尚未生成。交易日 <b>08:45</b> 由调度器'
                 '自动执行全市场盘前信息检索并展示；非交易日不检索、不报错。</div>',
                 unsafe_allow_html=True)
 

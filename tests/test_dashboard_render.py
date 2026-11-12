@@ -377,5 +377,54 @@ class TestAgentStatusMapping(unittest.TestCase):
         self.assertNotIn("无智能体", self._status("FOO_MODE"))
 
 
+class TestPreMarketRender(unittest.TestCase):
+    """回归：盘前速览必须返回完整卡片，且含全市场宽度与盘前资讯区块。"""
+
+    def _pre(self):
+        return {
+            "generated_at": "2026-11-12 08:45:00", "trading_day": "2026-11-12",
+            "source": "westock", "data_basis": "上一交易日收盘快照",
+            "regime": "OSCILLATION", "summary": "盘前摘要", "holdings": [],
+            "watchlist": [],
+            "universe": {"scope": "沪深300 + 中证500 候选池", "pool_total": 808,
+                         "snapshot_date": "2026-11-11", "sample": 388},
+            "market_breadth": {
+                "sample": 388, "up": 100, "down": 280, "flat": 8,
+                "limit_up": 1, "limit_down": 2, "big_up": 3, "big_down": 4,
+                "avg_change": -0.5, "median_change": -0.3,
+                "leaders": [{"name": "领涨股", "industry": "银行", "change_pct": 5.0}],
+                "laggards": [{"name": "领跌股", "industry": "有色", "change_pct": -5.0}],
+            },
+            "sectors": {"leaders": [{"industry": "银行", "avg_change": 0.5}],
+                        "laggards": [{"industry": "有色", "avg_change": -2.0}]},
+            "news": {
+                "available": True, "generated_at": "2026-11-12 08:45:00",
+                "sources": {"news": {"label": "政策与市场要闻", "ok": True,
+                                     "count": 1, "error": None}},
+                "policy": [{"title": "财政部：加强监管", "time": "08:10",
+                            "source": "财政部", "url": ""}],
+                "market_news": [], "notices": [], "hot": [], "note": "采集正常",
+            },
+        }
+
+    def test_full_card_includes_breadth_and_news(self):
+        html = _import_dashboard().pre_market_html(self._pre())
+        self.assertIsInstance(html, str)
+        self.assertTrue(html)
+        for key in ("全市场涨跌分布", "领涨行业", "盘前资讯", "政策与监管",
+                    "财政部：加强监管", "全市场领涨 / 领跌"):
+            self.assertIn(key, html)
+
+    def test_news_failure_is_honest(self):
+        pre = self._pre()
+        pre["news"] = {"available": False, "note": "资讯源未就绪",
+                       "sources": {}, "generated_at": "2026-11-12 08:45:00"}
+        html = _import_dashboard().pre_market_html(pre)
+        self.assertIn("资讯源未就绪", html)
+
+    def test_empty_payload_returns_empty_string(self):
+        self.assertEqual(_import_dashboard().pre_market_html({}), "")
+
+
 if __name__ == "__main__":
     unittest.main()

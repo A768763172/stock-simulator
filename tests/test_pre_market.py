@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -129,6 +130,7 @@ class TestRunPreMarket(unittest.TestCase):
                 LIVE_PRICES_JSON=os.path.join(tmp, "live_prices.json"),
                 LEARNED_PARAMS_JSON=os.path.join(tmp, "learned_params.json"),
                 WESTOCK_CACHE_JSON=os.path.join(tmp, "none_cache.json"),
+                NEWS_JSON=os.path.join(tmp, "none_news.json"),
                 PRE_MARKET_JSON=os.path.join(tmp, "pre_market.json"),
             )
             with patch.multiple(pm, **paths):
@@ -158,6 +160,7 @@ class TestRunPreMarket(unittest.TestCase):
                 LIVE_PRICES_JSON=os.path.join(tmp, "none2.json"),
                 LEARNED_PARAMS_JSON=os.path.join(tmp, "none3.json"),
                 WESTOCK_CACHE_JSON=os.path.join(tmp, "none4.json"),
+                NEWS_JSON=os.path.join(tmp, "none5.json"),
                 PRE_MARKET_JSON=os.path.join(tmp, "pre_market.json"),
             )
             with patch.multiple(pm, **paths):
@@ -283,6 +286,13 @@ class TestRunPreMarketUniverse(unittest.TestCase):
             "hold": {"name": "持仓股", "prev_close": 10.0,
                      "open": 10.1, "change_pct": 1.0}})
         w("learned_params.json", {"learner": {"regime": "BULL"}})
+        w("news.json", {"trading_day": date.today().isoformat(),
+                        "available": True, "generated_at": "2026-11-12 08:45:00",
+                        "sources": {"news": {"label": "政策与市场要闻", "ok": True,
+                                              "count": 1, "error": None}},
+                        "policy": [{"title": "财政部：加强监管", "time": "08:10"}],
+                        "market_news": [], "notices": [], "hot": [],
+                        "note": "采集正常"})
         w("cache.json", {"quote": {
             "sh600000": _q("2026-11-12", 11.0, 10.0, "领涨股"),
             "sh600001": _q("2026-11-12", 9.0, 10.0, "领跌股"),
@@ -294,6 +304,7 @@ class TestRunPreMarketUniverse(unittest.TestCase):
             LIVE_PRICES_JSON=os.path.join(tmp, "live_prices.json"),
             LEARNED_PARAMS_JSON=os.path.join(tmp, "learned_params.json"),
             WESTOCK_CACHE_JSON=os.path.join(tmp, "cache.json"),
+            NEWS_JSON=os.path.join(tmp, "news.json"),
             PRE_MARKET_JSON=os.path.join(tmp, "pre_market.json"),
         )
 
@@ -312,11 +323,14 @@ class TestRunPreMarketUniverse(unittest.TestCase):
             self.assertTrue(any(w["scope"] == "全市场" for w in out["watchlist"]))
             self.assertIn("全市场涨跌", out["summary"])
             self.assertEqual(out["regime"], "BULL")
+            self.assertTrue(out["news"]["available"])
+            self.assertIn("盘前资讯", out["summary"])
 
     def test_missing_cache_degrades_without_fabrication(self):
         with tempfile.TemporaryDirectory() as tmp:
             paths = self._paths(tmp)
             paths["WESTOCK_CACHE_JSON"] = os.path.join(tmp, "missing.json")
+            paths["NEWS_JSON"] = os.path.join(tmp, "missing_news.json")
             with patch.multiple(pm, **paths):
                 self.assertTrue(pm.run_pre_market().startswith("OK"))
                 with open(paths["PRE_MARKET_JSON"], encoding="utf-8") as f:
@@ -325,13 +339,14 @@ class TestRunPreMarketUniverse(unittest.TestCase):
             self.assertEqual(out["market_breadth"]["sample"], 0)
             self.assertIn("全市场快照暂不可用", out["summary"])
             self.assertTrue(out["watchlist"])   # 持仓异动兜底仍有内容
+            self.assertFalse(out["news"]["available"])  # 旧日期资讯不冒充当日
 
 
 class TestSchedulerTiming(unittest.TestCase):
     def test_pre_market_starts_before_open_and_after_midnight(self):
         from datetime import time as dtime
         import scheduler
-        self.assertEqual(scheduler.PRE_MARKET_START, dtime(8, 30))
+        self.assertEqual(scheduler.PRE_MARKET_START, dtime(8, 45))
         self.assertLess(scheduler.PRE_MARKET_START, scheduler.INTRADAY_START)
         self.assertEqual(scheduler.INTRADAY_START, dtime(9, 30))
         self.assertEqual(scheduler.CLOSE_RUN, dtime(15, 35))

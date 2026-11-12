@@ -1,6 +1,6 @@
 """stock-simulator · 盘前信息检索（开盘前主动准备，不触发任何交易）。
 
-职责：在每个交易日开盘前（由 scheduler 在 08:30 触发一次）主动完成：
+职责：在每个交易日开盘前（由 scheduler 在 08:45 触发一次）主动完成：
   1) 复用收盘流程预热的「全市场行情快照」data/.westock_cache.json
      （沪深300 + 中证500 候选池，含 price / prev_close / 行业），
      汇总全市场涨跌分布、涨跌停、领涨领跌个股与行业强弱、异动榜；
@@ -11,11 +11,13 @@
   4) 基于全市场真实快照生成「盘前关注」观察池（纯展示，不构成交易信号），
      非持仓优先、涨跌两侧兼顾，全市场样本不足时用持仓内异动如实补足；
   5) 快照智能体当前学习状态（learned_params.json 中优化后的真实权重）；
-  6) 落盘 data/pre_market.json，供看板「盘前速览」展示。
+  6) 汇入独立子进程采集的盘前资讯 data/pre_market_news.json
+     （政策要闻 / 公司公告 / 财经热文，只展示行情源真实返回内容）；
+  7) 落盘 data/pre_market.json，供看板「盘前速览」展示。
 
 可靠性设计（关键）：
   - 全程只读本地已落盘数据，不发起任何行情网络请求：
-    A 股 09:15 才开始集合竞价，08:30 盘前抓到的仍只是昨收；且历史上
+    A 股 09:15 才开始集合竞价，08:45 盘前抓到的仍只是昨收；且历史上
     warm_universe / get_quote 等网络调用在盘前极易阻塞并拖累 09:30 开盘循环。
     真实的全市场行情采集由 15:35 收盘流程负责，本脚本只做「信息汇总与研判」。
   - 全市场统计统一采用「最新快照日」的有效样本，混用不同日期的涨跌幅会失真；
@@ -39,6 +41,7 @@ ACCOUNT_JSON = os.path.join(DATA_DIR, "account.json")
 LIVE_PRICES_JSON = os.path.join(DATA_DIR, "live_prices.json")
 LEARNED_PARAMS_JSON = os.path.join(DATA_DIR, "learned_params.json")
 WESTOCK_CACHE_JSON = os.path.join(DATA_DIR, ".westock_cache.json")
+NEWS_JSON = os.path.join(DATA_DIR, "pre_market_news.json")
 
 WATCH_TOP = 10           # 盘前异动观察池入选数量
 MOMENTUM_OPEN = 0.3      # 持仓快照涨跌幅绝对值 ≥0.3% 视为异动
@@ -294,7 +297,7 @@ def _universe_watchlist(rows: list, live: dict, held_codes: set) -> list:
 
 
 def _data_basis(live_meta: dict) -> str:
-    """判定持仓行情快照基准：盘前 08:30 尚无当日行情，缓存仍是上一交易日收盘快照。
+    """判定持仓行情快照基准：盘前 08:45 尚无当日行情，缓存仍是上一交易日收盘快照。
     如实标注，避免把「昨收涨跌」误称为「当日盘前涨跌」——模拟真实。"""
     gen = (live_meta.get("generated_at") or "")[:10]
     today = date.today().isoformat()
@@ -303,6 +306,35 @@ def _data_basis(live_meta: dict) -> str:
     if gen:
         return f"上一交易日收盘快照（{gen}）"
     return "历史快照（时点未知）"
+
+
+def _news_block() -> dict:
+    """读取盘前资讯采集结果（本脚本仍零网络）。
+    资讯必须是「当日」的：开机较晚跳过采集时，本地可能还是上一交易日的存档，
+    此时不展示为当日资讯，避免把旧闻冒充盘前消息。"""
+    empty = {
+        "available": False, "generated_at": None, "trading_day": None,
+        "sources": {}, "policy": [], "market_news": [], "notices": [], "hot": [],
+        "note": "今日盘前资讯尚未采集（或资讯源未就绪），不虚构内容。",
+    }
+    n = _load_json(NEWS_JSON, {})
+    if not isinstance(n, dict) or not n:
+        return empty
+    if n.get("trading_day") != date.today().isoformat():
+        empty["note"] = (f"今日盘前资讯未采集；本地仅有 {n.get('trading_day')} 的存档，"
+                         f"未展示为当日资讯。")
+        return empty
+    return {
+        "available": bool(n.get("available")),
+        "generated_at": n.get("generated_at"),
+        "trading_day": n.get("trading_day"),
+        "sources": n.get("sources") or {},
+        "policy": n.get("policy") or [],
+        "market_news": n.get("market_news") or [],
+        "notices": n.get("notices") or [],
+        "hot": n.get("hot") or [],
+        "note": n.get("note") or "",
+    }
 
 
 def _universe_basis(stats: dict) -> str:
@@ -315,7 +347,7 @@ def _universe_basis(stats: dict) -> str:
 
 def _summary(regime: str, holdings: list, watch: list,
              live_meta: dict, basis: str, breadth: dict,
-             sectors: dict, stats: dict) -> str:
+             sectors: dict, stats: dict, news: dict) -> str:
     lines = []
     label = {"BULL": "偏多", "OSCILLATION": "震荡", "BEAR": "偏空",
              "UNKNOWN": "研判中"}.get(regime, regime)
@@ -357,6 +389,23 @@ def _summary(regime: str, holdings: list, watch: list,
     gen = (live_meta.get("generated_at") or "").replace("T", " ")
     if gen:
         lines.append(f"持仓快照时点：{gen}（调度守护每 3s 刷新）。")
+    nb = news or {}
+    if nb.get("available"):
+        lines.append(
+            f"盘前资讯：政策 {len(nb.get('policy') or [])} 条 / "
+            f"市场要闻 {len(nb.get('market_news') or [])} 条 / "
+            f"公司公告 {len(nb.get('notices') or [])} 条 / "
+            f"财经热文 {len(nb.get('hot') or [])} 条"
+            f"（{nb.get('generated_at') or '采集时点未知'} 采集）。")
+        pol = nb.get("policy") or []
+        if pol:
+            lines.append(f"政策关注：{str(pol[0].get('title'))[:48]}。")
+        ntc = nb.get("notices") or []
+        if ntc:
+            lines.append(f"持仓最近公告：{str(ntc[0].get('title'))[:48]}"
+                         f"（{ntc[0].get('time')}）。")
+    else:
+        lines.append(nb.get("note") or "盘前资讯未就绪。")
     lines.append("（盘前信息准备快照，不构成交易建议；实际决策以开盘后实时信号为准。）")
     return "".join(lines)
 
@@ -396,8 +445,10 @@ def run_pre_market(force: bool = False) -> str:
         "holdings": [],
         "watchlist": [],
         "learner_state": {},
+        "news": {},
         "summary": "",
     }
+    out["news"] = _news_block()
     out["holdings"] = _holdings_pre(account, live)
     held_codes = {h["code"] for h in out["holdings"]}
     try:
@@ -408,7 +459,7 @@ def run_pre_market(force: bool = False) -> str:
     out["learner_state"] = _learner_state(learned)
     out["summary"] = _summary(out["regime"], out["holdings"],
                               out["watchlist"], live_meta, out["data_basis"],
-                              breadth, sectors, stats)
+                              breadth, sectors, stats, out["news"])
 
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(PRE_MARKET_JSON, "w", encoding="utf-8") as f:

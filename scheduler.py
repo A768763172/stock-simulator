@@ -11,13 +11,16 @@
         与收盘 daily_step 同源但盘中不重复累计持仓周期、当日已交易集合跨调用
         保留以免疫信号闪烁重复开仓。选股器经并行预热，冷缓存下单次决策由数分钟
         级降至十几秒级。
-  - 交易日 08:30（开盘前 1 小时）：触发 pre_market.py 做盘前信息检索，
-    基于收盘流程预热的全市场快照汇总涨跌分布 / 异动 / 行业强弱（纯本地、零网络），
+  - 交易日 08:45（贴合开机窗口）：先以独立子进程限时采集盘前资讯
+    （pre_market_news.py：政策要闻 / 公司公告 / 财经热文，失败不阻塞），
+    再由 pre_market.py 汇总全市场快照的涨跌分布 / 异动 / 行业强弱（纯本地、零网络），
     落盘 data/pre_market.json 供看板「盘前速览」展示。
+  - 盘前检索按「交易日一次」而非「固定时刻一次」：调度器无论在 08:45、09:10
+    还是 10:00 才启动（开机晚），启动后都立即补做当日盘前检索，绝不会漏一天。
   - 交易日 15:35（收盘后）：调用 live_run.py 执行当日完整流程
     「行情获取 → 交易决策 → 模拟撮合 → 收盘复盘 → 策略优化」，
     落盘本地 data/ 并输出当日总结。
-  - 非交易日：休眠至下一交易日 08:30 再评估。
+  - 非交易日：休眠至下一交易日 08:45 再评估。
   - 进程异常自动重启（外层 while + try/except），保证长期存活。
 
 用法：
@@ -95,14 +98,18 @@ WESTOCK_DEFAULT = "C:/Users/Administrator/.workbuddy/binaries/westock/westock.ex
 PY = "C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe"
 LIVE_RUN = os.path.join(HERE, "live_run.py")
 PRE_MARKET = os.path.join(HERE, "pre_market.py")
+PRE_MARKET_NEWS = os.path.join(HERE, "pre_market_news.py")
 SCHED_LOG = os.path.join(HERE, "data", "scheduler.log")
 
 INTRADAY_START = dtime(9, 30, 0)
 INTRADAY_END = dtime(15, 0, 0)
 CLOSE_RUN = dtime(15, 35, 0)
-# 08:30：比开盘早 1 小时，留足全市场快照汇总、风格研判与人工查看时间；
-# 且 A 股 09:15 才有集合竞价行情，更早抓网络行情无意义，故盘前检索走本地全市场快照。
-PRE_MARKET_START = dtime(8, 30, 0)   # 盘前信息检索开始时刻（交易日开盘前）
+# 08:45：用户的电脑一般 08:30–08:45 才开机，定时设太早没有意义；
+# 真正保证不漏跑的是「启动即补做」状态机（见 main），这里只是「最早几点开始」。
+# A 股 09:15 才有集合竞价，盘前行情检索仍走本地全市场快照（零网络）。
+PRE_MARKET_START = dtime(8, 45, 0)   # 盘前信息检索最早开始时刻（交易日开盘前）
+NEWS_CUTOFF = dtime(9, 20, 0)        # 晚于此时补做则跳过资讯联网采集，避免拖累 09:30
+NEWS_TIMEOUT = 120                   # 资讯采集子进程硬超时（秒）
 REFRESH_SEC = 3                       # 盘中快照刷新频率（与看板重绘对齐，消除时效性偏差）
 EXIT_CHECK_SEC = 10                   # 盘中高频退出监控间隔（纯本地，实时价来自刚刷新的 live_prices.json）
 INTRADAY_DECISION_SEC = 300           # 盘中低频完整决策间隔（含选股开仓，默认 5 分钟）
@@ -260,6 +267,33 @@ def run_pre_market(market: WeStockProvider, force: bool = False) -> None:
         log(f"pre_market 调用失败: {e}")
 
 
+def run_pre_market_news() -> None:
+    """盘前资讯采集：独立子进程 + 硬超时，任何失败/超时都不影响 09:30 开盘。"""
+    if datetime.now().time() >= NEWS_CUTOFF:
+        log("临近/已过开盘，跳过盘前资讯联网采集（避免拖累 09:30），沿用本地资讯缓存")
+        return
+    log("触发盘前资讯采集（政策/公告/热文）：python pre_market_news.py")
+    try:
+        r = subprocess.run([PY, PRE_MARKET_NEWS], cwd=HERE,
+                            capture_output=False, text=True, timeout=NEWS_TIMEOUT)
+        log(f"pre_market_news 退出码={r.returncode}")
+    except Exception as e:
+        log(f"pre_market_news 调用失败或超时（忽略，不影响开盘）: {e}")
+
+
+def pre_market_action(now: datetime, trading_day: date, pre_done_day) -> str:
+    """盘前阶段状态机（纯函数，便于单测覆盖「开机晚」场景）。
+      sleep —— 未到 08:45，等到点再跑；
+      run   —— 到点即跑；开机晚（含 09:30 之后才开机）同样是 run，保证不漏一天；
+      skip  —— 本交易日已完成。
+    """
+    if pre_done_day == trading_day:
+        return "skip"
+    if now.time() < PRE_MARKET_START:
+        return "sleep"
+    return "run"
+
+
 def sleep_until(target: datetime) -> None:
     secs = (target - datetime.now()).total_seconds()
     if secs <= 0:
@@ -281,27 +315,37 @@ def next_run_time(market: WeStockProvider, today: date) -> datetime:
 def main(once: bool = False) -> None:
     market = make_market()
     log("调度守护进程启动（实盘数据 / westock）。")
+    pre_done_day = None   # 已完成盘前检索的交易日（进程内状态，主循环异常重试不重置）
     while True:
         try:
             now = datetime.now()
             today = now.date()
             if market.is_trading_day(today):
-                # 盘前（09:30 前）：08:30 触发一次全市场盘前检索，随后休眠至开盘
-                if datetime.now().time() < INTRADAY_START:
-                    if datetime.now().time() < PRE_MARKET_START:
-                        log(f"盘前准备：休眠至 {today} "
-                            f"{PRE_MARKET_START.strftime('%H:%M')} 触发全市场盘前检索")
-                        sleep_until(datetime.combine(today, PRE_MARKET_START))
-                        continue
-                    # 08:30 <= now < 09:30：执行盘前检索（脚本内部按日幂等，仅跑一次）
+                # —— 盘前：按「交易日一次」做，开机晚也启动即补做 ——
+                action = pre_market_action(datetime.now(), today, pre_done_day)
+                if action == "sleep":
+                    log(f"盘前准备：休眠至 {today} "
+                        f"{PRE_MARKET_START.strftime('%H:%M')} 触发全市场盘前检索")
+                    sleep_until(datetime.combine(today, PRE_MARKET_START))
+                    continue
+                if action == "run":
+                    if datetime.now().time() >= INTRADAY_START:
+                        log("开机较晚（已过开盘时刻），立即补做当日盘前检索"
+                            "（基准以实际快照为准，不虚构盘前行情）")
+                    try:
+                        run_pre_market_news()
+                    except Exception as e:
+                        log(f"盘前资讯采集异常（忽略）: {e}")
                     try:
                         run_pre_market(market)
                     except Exception as e:
                         log(f"盘前检索异常（忽略）: {e}")
-                    log(f"盘前检索完成，休眠至 {today} "
-                        f"{INTRADAY_START.strftime('%H:%M')}（等待开盘）")
-                    sleep_until(datetime.combine(today, INTRADAY_START))
-                    continue
+                    pre_done_day = today
+                    if datetime.now().time() < INTRADAY_START:
+                        log(f"盘前检索完成，休眠至 {today} "
+                            f"{INTRADAY_START.strftime('%H:%M')}（等待开盘）")
+                        sleep_until(datetime.combine(today, INTRADAY_START))
+                        continue
                 # 盘中实时价刷新（仅 09:30–15:00）+ 双层实时决策
                 last_decision = datetime.min   # 开盘即触发一次完整决策
                 while (INTRADAY_START <= datetime.now().time() <= INTRADAY_END
@@ -342,7 +386,7 @@ def main(once: bool = False) -> None:
                     if once:
                         log("单次模式：当日流程已完成，退出。")
                         return
-                    # 休眠至下一交易日 08:30（盘前检索）
+                    # 休眠至下一交易日 08:45（盘前检索）
                     nd = market.next_trading_day(today)
                     sleep_until(datetime.combine(nd, PRE_MARKET_START))
                 else:
