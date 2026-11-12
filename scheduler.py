@@ -91,11 +91,13 @@ from market.westock_provider import WeStockProvider
 WESTOCK_DEFAULT = "C:/Users/Administrator/.workbuddy/binaries/westock/westock.exe"
 PY = "C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe"
 LIVE_RUN = os.path.join(HERE, "live_run.py")
+PRE_MARKET = os.path.join(HERE, "pre_market.py")
 SCHED_LOG = os.path.join(HERE, "data", "scheduler.log")
 
 INTRADAY_START = dtime(9, 30, 0)
 INTRADAY_END = dtime(15, 0, 0)
 CLOSE_RUN = dtime(15, 35, 0)
+PRE_MARKET_START = dtime(9, 0, 0)    # 盘前信息检索开始时刻（开盘前主动预热与研判）
 REFRESH_SEC = 3                       # 盘中快照刷新频率（与看板重绘对齐，消除时效性偏差）
 EXIT_CHECK_SEC = 10                   # 盘中高频退出监控间隔（纯本地，实时价来自刚刷新的 live_prices.json）
 INTRADAY_DECISION_SEC = 300           # 盘中低频完整决策间隔（含选股开仓，默认 5 分钟）
@@ -239,6 +241,17 @@ def run_daily(market: WeStockProvider) -> None:
         pass
 
 
+def run_pre_market(market: WeStockProvider) -> None:
+    """盘前信息检索（开盘前主动预热行情、研判风格、生成盘前摘要）。脚本自带按日幂等。"""
+    log("触发盘前信息检索：python pre_market.py")
+    try:
+        r = subprocess.run([PY, PRE_MARKET], cwd=HERE,
+                            capture_output=False, text=True, timeout=1800)
+        log(f"pre_market 退出码={r.returncode}")
+    except Exception as e:
+        log(f"pre_market 调用失败: {e}")
+
+
 def sleep_until(target: datetime) -> None:
     secs = (target - datetime.now()).total_seconds()
     if secs <= 0:
@@ -265,9 +278,18 @@ def main(once: bool = False) -> None:
             now = datetime.now()
             today = now.date()
             if market.is_trading_day(today):
-                # 盘前（09:30 前启动）：休眠至开盘，避免直接睡到收盘而漏掉盘中刷新
+                # 盘前（09:30 前）：09:00 触发一次盘前信息检索，随后休眠至开盘
                 if datetime.now().time() < INTRADAY_START:
-                    log(f"盘前休眠至 {today} 09:30（期间持续存活，等待盘中实时采集）")
+                    if datetime.now().time() < PRE_MARKET_START:
+                        log(f"盘前准备：休眠至 {today} 09:00 触发盘前检索")
+                        sleep_until(datetime.combine(today, PRE_MARKET_START))
+                        continue
+                    # 09:00 <= now < 09:30：执行盘前信息检索（脚本内部按日幂等，仅跑一次）
+                    try:
+                        run_pre_market(market)
+                    except Exception as e:
+                        log(f"盘前检索异常（忽略）: {e}")
+                    log(f"盘前检索完成，休眠至 {today} 09:30（等待开盘）")
                     sleep_until(datetime.combine(today, INTRADAY_START))
                     continue
                 # 盘中实时价刷新（仅 09:30–15:00）+ 双层实时决策

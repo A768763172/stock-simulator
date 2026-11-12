@@ -661,6 +661,92 @@ def feed_html(feed: List[dict], limit: int = 120) -> str:
 
 
 # ============ 主界面 ============
+def pre_market_html(pre: dict) -> str:
+    """盘前速览卡片：只读 data/pre_market.json（由 pre_market.py 在交易日 09:00 生成）。
+    浅色主题、涨红跌绿；无数据返回空串，由调用方显示提示。"""
+    if not pre or not pre.get("generated_at"):
+        return ""
+    import html as _html
+
+    def esc(s):
+        return _html.escape(str(s if s is not None else ""))
+
+    def px(v):
+        try:
+            return f"{float(v):.3f}" if v is not None else "—"
+        except Exception:
+            return "—"
+
+    def chg_cell(v):
+        if v is None:
+            return '<td style="color:#718096">—</td>'
+        try:
+            f = float(v)
+        except Exception:
+            return '<td style="color:#718096">—</td>'
+        color = C_UP if f > 0 else (C_DOWN if f < 0 else "#4a5568")
+        return f'<td style="color:{color};font-weight:600">{f:+.2f}%</td>'
+
+    rmap = {
+        "BULL": ("偏多 BULL", "#c0392b", "#fff5f5", "#fc8181"),
+        "BEAR": ("偏空 BEAR", "#1a7a3a", "#f0fff4", "#9ae6b4"),
+        "OSCILLATION": ("震荡 OSCILLATION", "#2b6cb0", "#ebf8ff", "#90cdf4"),
+        "UNKNOWN": ("研判中（数据未就绪）", "#718096", "#f7fafc", "#e2e8f0"),
+    }
+    rlabel, rcolor, rbg, rborder = rmap.get(pre.get("regime"), rmap["UNKNOWN"])
+
+    head = (
+        f'<div style="background:{rbg};border:1px solid {rborder};border-radius:8px;'
+        f'padding:10px 14px;margin-bottom:10px">'
+        f'<div style="font-size:14px;font-weight:700;color:#2d3748;margin-bottom:5px">'
+        f'盘前速览 · {esc(pre.get("trading_day"))} '
+        f'<span style="color:{rcolor};font-size:13px">｜ 风格：{rlabel}</span>'
+        f'<span style="color:#a0aec0;font-size:11px;font-weight:400">'
+        f' ｜ 生成 {esc(pre.get("generated_at"))} ｜ {esc(pre.get("source"))}'
+        f' ｜ 基准 {esc(pre.get("data_basis"))}</span></div>'
+        f'<div style="font-size:13px;color:#2d3748;line-height:1.6">'
+        f'{esc(pre.get("summary"))}</div>'
+    )
+
+    holdings = pre.get("holdings") or []
+    watch = pre.get("watchlist") or []
+    ht = ""
+    for h in holdings:
+        ht += (f'<tr><td>{esc(h.get("name"))}</td><td>{esc(h.get("code"))}</td>'
+               f'<td>{px(h.get("prev_close"))}</td><td>{px(h.get("open"))}</td>'
+               f'{chg_cell(h.get("change_pct"))}</tr>')
+    wt = ""
+    for w in watch:
+        wt += (f'<tr><td>{esc(w.get("name"))}</td><td>{esc(w.get("code"))}</td>'
+               f'<td style="color:#718096">{esc(w.get("scope"))}</td>'
+               f'{chg_cell(w.get("change_pct"))}</tr>')
+
+    col1 = (
+        '<div style="flex:1;min-width:0">'
+        '<div style="font-size:12px;font-weight:600;color:#4a5568;margin:6px 0">'
+        f'持仓盘前快照（{len(holdings)}）</div>'
+        '<table class="grid"><tr><th>名称</th><th>代码</th><th>昨收</th>'
+        '<th>今开</th><th>盘前</th></tr>' + (ht or
+        '<tr><td colspan="5" style="text-align:center;color:#a0aec0">无数据</td></tr>') +
+        '</table></div>'
+    )
+    col2 = (
+        '<div style="flex:1;min-width:0">'
+        '<div style="font-size:12px;font-weight:600;color:#4a5568;margin:6px 0">'
+        f'盘前异动观察（{len(watch)}）</div>'
+        '<table class="grid"><tr><th>名称</th><th>代码</th><th>来源</th><th>盘前</th></tr>' + (wt or
+        '<tr><td colspan="4" style="text-align:center;color:#a0aec0">无数据</td></tr>') +
+        '</table></div>'
+    )
+    detail = (
+        '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;'
+        'color:#2b6cb0">展开：盘前持仓快照 / 异动观察明细</summary>'
+        '<div style="display:flex;gap:18px;margin-top:6px">' + col1 + col2 +
+        '</div></details>'
+    )
+    return head + detail + '</div>'
+
+
 def _render():
     account = load_json(DATA / "account.json", {})
     live = load_json(DATA / "live_prices.json", {})
@@ -791,6 +877,17 @@ def _render():
             '⚠ <b>部分标的行情未就绪</b>：持仓明细中标红「行情未就绪」项缺少有效行情快照，'
             '已禁止展示虚构价，请等待下一周期刷新或由源恢复。</div>',
             unsafe_allow_html=True)
+
+    # ========== 0) 盘前速览（交易日 09:00 由调度器生成，非交易日不检索）==========
+    if mode == "实时看板":
+        _pm = pre_market_html(load_json(DATA / "pre_market.json", {}))
+        if _pm:
+            st.markdown(_pm, unsafe_allow_html=True)
+        else:
+            st.markdown(
+                '<div class="summary">盘前速览：尚未生成。交易日 <b>09:00</b> 由调度器'
+                '自动执行盘前信息检索并展示；非交易日不检索、不报错。</div>',
+                unsafe_allow_html=True)
 
     # ========== 1) 账户概览 ==========
     st.subheader("① 账户概览")
