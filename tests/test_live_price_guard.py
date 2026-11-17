@@ -61,8 +61,8 @@ class TestLivePriceGuard(unittest.TestCase):
         sim, tmp, code = self._sim_with_position("zero")
         data = sim.refresh_live_prices()
         self.assertNotIn(code, data, "0 价不应落库")
-        lp = json.loads(open(os.path.join(tmp, "live_prices.json"),
-                             encoding="utf-8").read())
+        with open(os.path.join(tmp, "live_prices.json"), encoding="utf-8") as f:
+            lp = json.load(f)
         self.assertNotIn(code, lp, "live_prices.json 不应含 0 价标的")
 
     def test_source_failure_falls_back_to_valid(self):

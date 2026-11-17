@@ -111,7 +111,8 @@ class TestCollect(unittest.TestCase):
                 raise RuntimeError("公告源超时")
             return _fake_run(args, title_field)
         with patch.object(pn, "_run", side_effect=flaky), \
-             patch.object(pn, "_holding_codes", return_value=["sh600000"]):
+             patch.object(pn, "_holding_codes", return_value=["sh600000"]), \
+             patch.object(pn, "RETRY_WAIT", 0):
             out = pn.collect()
         self.assertFalse(out["sources"]["notice"]["ok"])
         self.assertIn("公告源超时", out["sources"]["notice"]["error"])
@@ -126,6 +127,32 @@ class TestCollect(unittest.TestCase):
         self.assertFalse(out["sources"]["notice"]["ok"])
         self.assertIn("无持仓", out["sources"]["notice"]["error"])
 
+    def test_transient_timeout_is_retried_and_recovers(self):
+        """开机后网络未就绪导致首轮超时，重试一次后该源应恢复。"""
+        calls = {"hot": 0}
+
+        def flaky(args, title_field):
+            if args[0] == "hot":
+                calls["hot"] += 1
+                if calls["hot"] == 1:
+                    raise RuntimeError("CLI 超时 45s")
+            return _fake_run(args, title_field)
+
+        with patch.object(pn, "_run", side_effect=flaky), \
+             patch.object(pn, "_holding_codes", return_value=["sh600000"]), \
+             patch.object(pn, "RETRY_WAIT", 0):
+            out = pn.collect()
+        self.assertEqual(calls["hot"], 2)
+        self.assertTrue(out["sources"]["hot"]["ok"])
+        self.assertEqual(out["sources"]["hot"]["attempts"], 2)
+        self.assertEqual(len(out["hot"]), 1)
+
+    def test_timeout_constants_leave_room_for_cold_cli(self):
+        self.assertGreaterEqual(pn.CLI_TIMEOUT, 40)
+        self.assertGreaterEqual(pn.CLI_RETRIES, 1)
+        self.assertGreaterEqual(scheduler.NEWS_TIMEOUT,
+                                pn.CLI_TIMEOUT * (pn.CLI_RETRIES + 1) * 3)
+
 
 class TestRunIdempotentAndDegrade(unittest.TestCase):
     def test_idempotent_and_all_sources_failed_still_writes_honest_file(self):
@@ -136,6 +163,7 @@ class TestRunIdempotentAndDegrade(unittest.TestCase):
                 ACCOUNT_JSON=os.path.join(tmp, "none_account.json"),
             )
             with patch.multiple(pn, **paths), \
+                 patch.object(pn, "RETRY_WAIT", 0), \
                  patch.object(pn, "_run", side_effect=RuntimeError("offline")):
                 self.assertTrue(pn.run().startswith("OK"))
                 with open(paths["OUT_JSON"], encoding="utf-8") as f:
@@ -186,7 +214,7 @@ class TestPreMarketAction(unittest.TestCase):
         self.assertEqual(scheduler.PRE_MARKET_START, dtime(8, 45))
         self.assertLess(scheduler.PRE_MARKET_START, scheduler.INTRADAY_START)
         self.assertLess(scheduler.NEWS_CUTOFF, scheduler.INTRADAY_START)
-        self.assertEqual(scheduler.NEWS_TIMEOUT, 120)
+        self.assertEqual(scheduler.NEWS_TIMEOUT, 300)
 
     def test_boot_window(self):
         day = date(2026, 11, 13)

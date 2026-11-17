@@ -19,6 +19,7 @@ data/pre_market_news.json，再由 pre_market.py（零网络）汇总进盘前�
 import os
 import glob
 import json
+import time
 import subprocess
 from datetime import date, datetime, timedelta
 
@@ -28,7 +29,12 @@ ACCOUNT_JSON = os.path.join(DATA_DIR, "account.json")
 OUT_JSON = os.path.join(DATA_DIR, "pre_market_news.json")
 
 WESTOCK_DEFAULT = "C:/Users/Administrator/.workbuddy/binaries/westock/westock.exe"
-CLI_TIMEOUT = 25          # 单个 CLI 调用硬超时（秒），失败立即跳过该源
+# 实测 westock CLI 冷启动 11~13s，批量（news --limit 30 / 12 只持仓公告）更慢；
+# 25s 曾让 2026-11-17 08:45 三个源全部 TimeoutExpired（0/3 就绪）。放宽到 45s
+# 并给每源一次重试，仍由 scheduler 的 NEWS_TIMEOUT 做总闸，绝不影响 09:30 开盘。
+CLI_TIMEOUT = 45          # 单个 CLI 调用硬超时（秒）
+CLI_RETRIES = 1           # 单源失败后的额外重试次数（应对开机后网络/DNS 尚未就绪）
+RETRY_WAIT = 2            # 重试前等待（秒）
 RECENT_HOURS = 30         # 只保留近 30 小时：覆盖昨夜公告与今晨政策，不含旧闻
 TOP_N = 10                # 每组最多展示条数
 
@@ -89,14 +95,20 @@ def _parse_md(text: str, title_field: str) -> list:
 
 def _run(args, title_field):
     cmd = [_cli(), *args]
-    res = subprocess.run(cmd, capture_output=True, text=True,
-                         encoding="utf-8", timeout=CLI_TIMEOUT)
+    started = datetime.now()
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True,
+                             encoding="utf-8", timeout=CLI_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"CLI 超时 {CLI_TIMEOUT}s: {' '.join(args[:2])}")
+    elapsed = (datetime.now() - started).total_seconds()
     if res.returncode != 0 or not (res.stdout or "").strip():
-        raise RuntimeError(((res.stderr or "") + (res.stdout or "")).strip()[-160:]
-                           or f"退出码 {res.returncode}")
+        raise RuntimeError(f"{elapsed:.0f}s "
+                           + (((res.stderr or "") + (res.stdout or "")).strip()[-160:]
+                              or f"退出码 {res.returncode}"))
     rows = _parse_md(res.stdout, title_field)
     if not rows:
-        raise RuntimeError("返回内容中无有效表格行")
+        raise RuntimeError(f"{elapsed:.0f}s 返回内容中无有效表格行")
     return rows
 
 
@@ -165,18 +177,25 @@ def collect() -> dict:
     src = out["sources"]
 
     def _source(key, label, args, title_field, handler):
-        try:
-            rows = _run(args, title_field)
-            items = handler(rows)
-            src[key] = {"label": label, "ok": True, "count": len(items),
-                        "error": None}
-            _log(f"{label}：采集 {len(rows)} 行，保留 {len(items)} 条")
-            return items
-        except Exception as e:
-            src[key] = {"label": label, "ok": False, "count": 0,
-                        "error": f"{type(e).__name__}: {str(e)[:120]}"}
-            _log(f"{label}：源未就绪（{src[key]['error']}），跳过且不阻塞")
-            return []
+        last_err = None
+        for attempt in range(CLI_RETRIES + 1):
+            try:
+                rows = _run(args, title_field)
+                items = handler(rows)
+                src[key] = {"label": label, "ok": True, "count": len(items),
+                            "error": None, "attempts": attempt + 1}
+                _log(f"{label}：采集 {len(rows)} 行，保留 {len(items)} 条"
+                     + (f"（第 {attempt + 1} 次尝试成功）" if attempt else ""))
+                return items
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {str(e)[:120]}"
+                if attempt < CLI_RETRIES:
+                    _log(f"{label}：第 {attempt + 1} 次失败（{last_err}），{RETRY_WAIT}s 后重试")
+                    time.sleep(RETRY_WAIT)
+        src[key] = {"label": label, "ok": False, "count": 0,
+                    "error": last_err, "attempts": CLI_RETRIES + 1}
+        _log(f"{label}：源未就绪（{last_err}），跳过且不阻塞")
+        return []
 
     # 1) 政策与市场要闻（指数代码 = 市场资讯入口）
     news_rows = _source(
