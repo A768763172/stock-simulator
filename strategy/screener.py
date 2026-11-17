@@ -29,10 +29,17 @@ class Screener:
         self.market = market
         self.pool = StockPool(cfg, market)
 
-    def _warm(self, codes) -> None:
-        """并行预热给定标的的 fund/close/quote 缓存（westock 支持时）。
+    def _warm(self, codes, skip_quote: bool = True) -> None:
+        """并行预热给定标的的 fund/close 缓存（westock 支持时）。
 
         避免 build() 后续串行逐只冷启动 CLI（每只 ~8s）导致选股耗时数分钟。
+
+        默认 skip_quote=True：选股因子（compute_factor_scores）只读取
+        get_close_history + get_fundamentals，**从不读实时 quote**；市场宽度
+        （market_breadth）用的是 15:35 收盘预热的全市场快照。因此盘中/收盘选股
+        都无需再抓一遍全市场 quote——历史上这里默认抓 quote，几百只 × CLI 冷启动
+        11~13s 会独占调度器主循环十几分钟（实时价停更、决策/收盘被拖延）。
+        持仓与候选的真实成交价由 agent._refresh_quotes 单独抓取保证。
         best-effort：行情源不支持 / 异常时静默跳过（退回串行，行为不变）。
         """
         codes = list(dict.fromkeys(codes or []))
@@ -41,7 +48,7 @@ class Screener:
         m = self.market
         if hasattr(m, "warm_universe"):
             try:
-                m.warm_universe(codes, max_workers=10)
+                m.warm_universe(codes, max_workers=10, skip_quote=skip_quote)
             except Exception:
                 pass
 
@@ -88,13 +95,19 @@ class Screener:
                     adj += w_news * float(it.get("impact", 0.0) or 0.0)
         return self.cfg.env_score_sens * max(-1.0, min(1.0, adj))
 
-    def build(self, env=None, dim_weights: Dict[str, float] = None) -> List[Candidate]:
+    def build(self, env=None, dim_weights: Dict[str, float] = None,
+              warm_skip_quote: bool = True) -> List[Candidate]:
+        """warm_skip_quote 默认 True：预热选股池时跳过实时 quote（见 _warm）。
+
+        选股不需要实时价；需要实时价的是建仓撮合，由调用方在
+        agent._refresh_quotes 中只对最终候选/持仓单独抓取。
+        """
         passing = self.pool.screen()
         if not passing:
             return []
         # 并行预热 passing 标的的 fund/close/quote，使下方因子计算命中缓存、
         # 消除串行冷启动 CLI 的秒级耗时（防御态跳过本分支时支出为 0）。
-        self._warm([p["code"] for p in passing])
+        self._warm([p["code"] for p in passing], skip_quote=warm_skip_quote)
 
         # 1) 先算全市场波动率分布（用于低波动因子分位阈值）
         vol_universe: Dict[str, float] = {}

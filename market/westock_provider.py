@@ -27,7 +27,7 @@ import json
 import os
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import date, datetime, timedelta
 from typing import Dict, Any, List, Tuple
 
@@ -80,7 +80,12 @@ class WeStockProvider(MarketProvider):
         return data
 
     # ---------- CLI 调用（带重试/退避，缓解 429） ----------
-    def _run(self, *args: str, retries: int = 5) -> str:
+    def _run(self, *args: str, retries: int = 5, timeout: int = 40) -> str:
+        """调用 westock CLI。
+
+        timeout/retries 可配：盘中实时决策用「快速模式」（短超时 + 少重试），
+        避免单只脏源卡满 5 次重试 × 40s 独占主循环；收盘流程仍用默认宽松值。
+        """
         delay = 1.0
         last_err = ""
         for i in range(retries + 1):
@@ -90,7 +95,7 @@ class WeStockProvider(MarketProvider):
                 # （如「红利ETF华泰柏瑞」→「绾㈠埄ETF鍗庢嘲鏌忕憺」），并随缓存复用。
                 res = subprocess.run(
                     [self.cli, *args], capture_output=True, text=True,
-                    encoding="utf-8", timeout=40
+                    encoding="utf-8", timeout=timeout
                 )
             except FileNotFoundError:
                 raise RuntimeError(
@@ -307,7 +312,9 @@ class WeStockProvider(MarketProvider):
         }
 
     def warm_universe(self, codes: List[str], max_workers: int = 10,
-                      refresh_fund: bool = False, skip_quote: bool = False) -> int:
+                      refresh_fund: bool = False, skip_quote: bool = False,
+                      max_seconds: float = None, cli_timeout: int = 40,
+                      cli_retries: int = 5) -> int:
         """并行预热全市场缓存：quote(每日) + close(7天) + 可选 fundamentals(30天)。
 
         先并行抓取原始数据，回到主线程统一写入缓存，避免多线程缓存竞写。
@@ -315,6 +322,11 @@ class WeStockProvider(MarketProvider):
 
         skip_quote=True 时跳过实时价抓取（盘中实时价由 refresh_intraday 每 3s
         按需拉取持仓标的，无需在此预热全市场 quote，避免每日开盘无谓的 ~数百秒开销）。
+
+        max_seconds：整批预热的墙钟总预算（秒）。到点未完成的标的直接跳过，
+        保证任何脏源/网络抖动都不会让调用方（盘中决策）被独占超过该时长。
+        cli_timeout/cli_retries：透传单只 CLI 的超时与重试；盘中快模式用
+        短超时少重试，与 max_seconds 共同兜底。默认 None/40/5 保持原行为。
         """
         codes = list(dict.fromkeys(codes))
         today_d = date.today()
@@ -344,7 +356,9 @@ class WeStockProvider(MarketProvider):
             quote = None
             if not skip_quote:
                 try:
-                    qd = self._find_row(self._run("quote", code), code) or {}
+                    qd = self._find_row(
+                        self._run("quote", code, timeout=cli_timeout,
+                                  retries=cli_retries), code) or {}
                     quote = {
                         "code": code,
                         "name": qd.get("name") or qd.get("名称") or code,
@@ -373,19 +387,36 @@ class WeStockProvider(MarketProvider):
                     closes = []
             return code, raw, quote, closes
 
+        def _commit(code, raw, quote, closes):
+            if raw is not None:
+                fund_b[code] = {"date": today, "data": raw}
+                if raw.get("quote"):
+                    quote_b[code] = {"date": today, "data": raw["quote"]}
+                if raw.get("close"):
+                    close_b[code] = {"date": today, "data": raw["close"]}
+            if quote is not None:
+                quote_b[code] = {"date": today, "data": quote}
+            if closes:
+                close_b[code] = {"date": today, "data": closes}
+
         done = 0
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
-            for code, raw, quote, closes in ex.map(_work, codes):
-                if raw is not None:
-                    fund_b[code] = {"date": today, "data": raw}
-                    if raw.get("quote"):
-                        quote_b[code] = {"date": today, "data": raw["quote"]}
-                    if raw.get("close"):
-                        close_b[code] = {"date": today, "data": raw["close"]}
-                if quote is not None:
-                    quote_b[code] = {"date": today, "data": quote}
-                if closes:
-                    close_b[code] = {"date": today, "data": closes}
+            fut_map = {ex.submit(_work, c): c for c in codes}
+            if max_seconds is None:
+                finished = set(fut_map)
+            else:
+                # 墙钟总预算：到点只提交已完成的，其余 cancel，
+                # 保证脏源/抖动不会让盘中决策被长时间独占。
+                finished, pending = wait(fut_map, timeout=max_seconds)
+            for fut, code in fut_map.items():
+                if fut not in finished:
+                    fut.cancel()
+                    continue
+                try:
+                    _code, raw, quote, closes = fut.result()
+                except Exception:
+                    continue
+                _commit(_code, raw, quote, closes)
                 done += 1
         self.save_cache()
         return done

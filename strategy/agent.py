@@ -211,8 +211,10 @@ class StrategyAgent:
     def _refresh_quotes(self, codes) -> None:
         """刷新给定标的的实时价缓存（供盘中撮合使用实时成交价）。
 
-        优先用行情源的并行预热（warm_universe，westock 始终重抓 quote）；
-        不支持时退回清掉 quote 缓存强制重抓。best-effort，异常不影响主流程。
+        与选股预热（Screener._warm，skip_quote=True）不同：这里**必须抓真实
+        quote**，因为建仓/平仓的撮合价取自 get_quote。但只针对持仓 + 最终候选
+        （十几只），且启用快模式 + 90s 墙钟总预算，杜绝脏源把盘中主循环独占。
+        不支持 warm_universe 时退回清缓存强制重抓。best-effort，异常不影响主流程。
         """
         codes = list(dict.fromkeys(codes or []))
         if not codes:
@@ -220,7 +222,8 @@ class StrategyAgent:
         m = self.market
         if hasattr(m, "warm_universe"):
             try:
-                m.warm_universe(codes, max_workers=8, refresh_fund=False)
+                m.warm_universe(codes, max_workers=8, refresh_fund=False,
+                                max_seconds=90, cli_timeout=15, cli_retries=1)
                 return
             except Exception:
                 pass

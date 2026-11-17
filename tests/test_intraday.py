@@ -156,8 +156,10 @@ class TestScreenerParallelWarm(unittest.TestCase):
         self.m = MockProvider()
         self.calls = []
 
-        def warm(codes, max_workers=10, refresh_fund=False):
-            self.calls.append(list(codes))
+        def warm(codes, max_workers=10, refresh_fund=False, skip_quote=False,
+                 **kwargs):
+            self.calls.append({"codes": list(codes), "skip_quote": skip_quote,
+                               "kwargs": kwargs})
             return len(codes)
 
         self.m.warm_universe = warm
@@ -167,6 +169,73 @@ class TestScreenerParallelWarm(unittest.TestCase):
         # build() 应并行预热 passing 标的缓存（westock 路径），消除串行冷启动 CLI
         self.screener.build()
         self.assertTrue(self.calls, "build() 应调用 warm_universe 并行预热")
+
+    def test_build_skips_full_market_quote_by_default(self):
+        # 回归：盘中/选股预热绝不能逐只重抓全市场 quote（曾卡主循环 18 分钟）
+        self.screener.build()
+        self.assertTrue(self.calls)
+        self.assertTrue(all(c["skip_quote"] for c in self.calls),
+                        "选股预热必须 skip_quote=True，不抓实时价")
+
+    def test_build_can_opt_in_quote_when_explicitly_asked(self):
+        # 显式要求时仍可抓（保留能力，供未来需要收盘价的路径使用）
+        self.screener.build(warm_skip_quote=False)
+        self.assertTrue(any(not c["skip_quote"] for c in self.calls))
+
+
+class TestRefreshQuotesFastMode(unittest.TestCase):
+    """盘中成交价刷新：必须抓真实 quote，但受快模式 + 总预算约束。"""
+
+    def test_refresh_quotes_uses_bounded_fast_mode(self):
+        calls = []
+
+        def warm(codes, **kwargs):
+            calls.append({"codes": list(codes), "kwargs": kwargs})
+            return len(codes)
+
+        m = MockProvider()
+        m.warm_universe = warm
+        with tempfile.TemporaryDirectory() as td:
+            sim = Simulator(SimulatorConfig(provider="mock"), market=m,
+                            storage=LocalStore(td))
+            agent = StrategyAgent(sim, StrategyConfig())
+            agent._refresh_quotes(["sh600000", "sh600001"])
+        self.assertEqual(len(calls), 1)
+        kw = calls[0]["kwargs"]
+        self.assertFalse(kw.get("refresh_fund"))
+        self.assertLessEqual(kw.get("cli_timeout", 99), 20)
+        self.assertGreaterEqual(kw.get("max_seconds", 0), 1)
+        self.assertLessEqual(kw.get("max_seconds", 999), 120)
+
+    def test_refresh_quotes_empty_is_noop(self):
+        m = MockProvider()
+        calls = []
+        m.warm_universe = lambda codes, **kw: calls.append(list(codes))
+        with tempfile.TemporaryDirectory() as td:
+            sim = Simulator(SimulatorConfig(provider="mock"), market=m,
+                            storage=LocalStore(td))
+            agent = StrategyAgent(sim, StrategyConfig())
+            agent._refresh_quotes([])
+        self.assertFalse(calls)
+
+
+class TestWarmUniverseDeadline(unittest.TestCase):
+    """warm_universe 的墙钟总预算：超时不得让调用方被长时间独占。"""
+
+    def test_deadline_bounds_total_wait(self):
+        import time as _t
+        from market.westock_provider import WeStockProvider
+
+        with tempfile.TemporaryDirectory() as td:
+            p = WeStockProvider(cli="nonexistent", cache_dir=td)
+            # nonexistent CLI + skip_quote=True → 无网络调用，应在预算内快速返回。
+            # 主要验证 max_seconds 参数被接受且 wait() 语义正常（不为负/不误超时）。
+            t0 = _t.monotonic()
+            n = p.warm_universe(["sh600000"], max_workers=2, skip_quote=True,
+                                max_seconds=5)
+            cost = _t.monotonic() - t0
+            self.assertLess(cost, 5)
+            self.assertGreaterEqual(n, 1)
 
 
 if __name__ == "__main__":

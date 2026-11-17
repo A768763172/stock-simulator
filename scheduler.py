@@ -367,9 +367,14 @@ def main(once: bool = False) -> None:
                         try:
                             agent, _ = get_intraday_engine(market)
                             if agent is not None:
+                                _t0 = time.monotonic()
                                 st = run_intraday_decision(agent, market)
+                                _cost = time.monotonic() - _t0
+                                # 耗时显式入日志：历史曾因选股重抓全市场 quote
+                                # 独占主循环 18 分钟，这里可第一时间发现卡顿。
                                 log(f"盘中决策: 模式={st['mode']} 净值={st['equity']:.0f} "
-                                    f"仓位={st['position_fraction']:.1%} 持仓={st['held']}")
+                                    f"仓位={st['position_fraction']:.1%} 持仓={st['held']} "
+                                    f"耗时={_cost:.1f}s")
                                 last_decision = datetime.now()
                         except Exception as e:
                             log(f"盘中决策异常（忽略）: {e}")
